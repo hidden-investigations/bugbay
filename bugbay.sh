@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# ██████╗ ██╗   ██╗ ██████╗ ██████╗  █████╗ ██╗   ██╗
-# ██╔══██╗██║   ██║██╔═══██╗██╔══██╗██╔══██╗╚██╗ ██╔╝
-# ██████╔╝██║   ██║██║   ██║██████╔╝███████║ ╚████╔╝
-# ██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║  ╚██╔╝
-# ██████╔╝╚██████╔╝╚██████╔╝██║  ██║██║  ██║   ██║
-# ╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
+# ██████  ██    ██  ██████  ██████   █████  ██    ██ 
+# ██   ██ ██    ██ ██       ██   ██ ██   ██  ██  ██  
+# ██████  ██    ██ ██   ███ ██████  ███████   ████   
+# ██   ██ ██    ██ ██    ██ ██   ██ ██   ██    ██    
+# ██████   ██████   ██████  ██████  ██   ██    ██ 
+#
 #               BugBay – by HiddenInvestigations.net
 #
 # Local Pentest Lab Manager (Docker + hosts aliases)
@@ -18,8 +18,6 @@ IFS=$'\n\t'
 BUGBAY_NAME="BugBay"
 BUGBAY_BRAND="Hidden Investigations"
 BUGBAY_BRAND_URL="HiddenInvestigations.net"
-
-# Self-update source (adjust if your repo path changes)
 BUGBAY_UPDATE_URL="https://raw.githubusercontent.com/Hidden-Investigations/bugbay/main/bugbay.sh"
 
 ETC_HOSTS="/etc/hosts"
@@ -37,12 +35,13 @@ dim()  { if [ "$use_color" -eq 1 ]; then printf "%s" "$(tput dim)$1$(tput sgr0)"
 
 ascii_logo() {
 cat <<EOF
-██████╗ ██╗   ██╗ ██████╗ ██████╗  █████╗ ██╗   ██╗
-██╔══██╗██║   ██║██╔═══██╗██╔══██╗██╔══██╗╚██╗ ██╔╝
-██████╔╝██║   ██║██║   ██║██████╔╝███████║ ╚████╔╝
-██╔══██╗██║   ██║██║   ██║██╔══██╗██╔══██║  ╚██╔╝
-██████╔╝╚██████╔╝╚██████╔╝██║  ██║██║  ██║   ██║
-╚═════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
+
+██████  ██    ██  ██████  ██████   █████  ██    ██ 
+██   ██ ██    ██ ██       ██   ██ ██   ██  ██  ██  
+██████  ██    ██ ██   ███ ██████  ███████   ████   
+██   ██ ██    ██ ██    ██ ██   ██ ██   ██    ██    
+██████   ██████   ██████  ██████  ██   ██    ██ 
+
         ${BUGBAY_NAME} – by ${BUGBAY_BRAND_URL}
 EOF
 }
@@ -63,19 +62,33 @@ fi
 
 # Safe wrapper for docker ps that never trips 'set -e'
 dps() {
-  # usage: dps -q -f "name=^/mutillidae$"
   sudo docker ps "$@" 2>/dev/null || true
 }
 
 ensure_docker_running() {
   if ! have_cmd docker; then
-    echo "Docker not found. Install it (e.g. sudo apt install docker.io)"; exit 1
+    _die "Docker not found. Install it (e.g. sudo apt install docker.io)"
   fi
   if ! docker_status; then
     echo "Docker is not running."
     printf "Start Docker now (y/n)? "
     read -r answer || true
     if printf '%s' "$answer" | grep -iq '^y'; then docker_start; else _die "Docker must be running for this command."; fi
+  fi
+}
+
+############################################
+# Port listening check (ss | netstat)
+############################################
+is_listening() { # ip port
+  local ip="$1" port="$2"
+  local listen="$ip:$port"
+  if have_cmd ss; then
+    ss -lnt4 2>/dev/null | awk '{print $4}' | grep -qx "$listen"
+  elif have_cmd netstat; then
+    netstat -lnt 2>/dev/null | awk '{print $4}' | grep -qx "$listen"
+  else
+    return 1
   fi
 }
 
@@ -104,7 +117,7 @@ Power:
   $(bold "pull <lab|all>")                 Pull latest images
   $(bold "logs <lab>")                     Tail container logs
   $(bold "shell <lab>")                    Shell inside a running container
-  $(bold "rm <lab>")                       Stop & remove containers; clean hosts
+  $(bold "rm <lab|all> [--images|--purge] [--yes|-y] [--dry-run]")  Safe cleanup
   $(bold "self-update")                    Update script from GitHub
 
 Examples:
@@ -112,6 +125,7 @@ Examples:
   ./bugbay.sh info dvwa
   ./bugbay.sh start dvwa
   ./bugbay.sh startpublic dvwa 192.168.0.42 8080
+  ./bugbay.sh rm all --images --yes
   ./bugbay.sh logs juiceshop
   ./bugbay.sh pull all
   ./bugbay.sh shell bwapp
@@ -165,7 +179,7 @@ addhost() {
 }
 
 ############################################
-# Registry (for list/info)
+# Registry (for list/info & rm --images)
 # key|Name|Type|Image|DefaultPorts|LoopbackIP|URLHint|ShortNote|Creds
 ############################################
 lab_db() {
@@ -198,6 +212,15 @@ vulhub|Vulhub|compose|various (compose)|varies|N/A|https://github.com/vulhub/vul
 DB
 }
 
+# helpers to query lab_db
+lab_field() { # usage: lab_field <key> <idx>
+  local k="$1" idx="$2"
+  lab_db | awk -F'|' -v k="$k" -v i="$idx" '$1==k{print $i; exit}'
+}
+lab_type()  { lab_field "$1" 3; }
+lab_image() { lab_field "$1" 4; }
+single_keys() { lab_db | awk -F'|' '$3=="single"{print $1}'; }
+
 ############################################
 # Info / List output
 ############################################
@@ -207,8 +230,7 @@ print_info() {
   line="$(lab_db | awk -F'|' -v k="$key" '$1==k{print $0}')"
   [ -z "$line" ] && _die "Unknown lab: $key"
   IFS='|' read -r _ name type image ports ip url note creds <<<"$line"
-  ascii_logo
-  echo
+  ascii_logo; echo
   echo "$(bold "$name")"
   printf "%-12s %s\n" "Key:" "$key"
   printf "%-12s %s\n" "Type:" "$type"
@@ -228,16 +250,14 @@ print_info() {
 }
 
 list() {
-  ascii_logo
-  echo
+  ascii_logo; echo
   echo "$(bold "Available labs") — $(dim "use: ./bugbay.sh info <lab>")"
   printf "%-18s  %-6s  %-28s  %-18s  %s\n" "$(bold NAME)" "$(bold TYPE)" "$(bold IMAGE)" "$(bold DEFAULT PORTS)" "$(bold NOTES)"
   printf "%-18s  %-6s  %-28s  %-18s  %s\n" "------------------" "------" "----------------------------" "------------------" "-------------------------------"
   lab_db | while IFS='|' read -r key name type image ports ip url note creds; do
     printf "%-18s  %-6s  %-28s  %-18s  %s\n" "$key" "$type" "$image" "$ports" "$note"
   done
-  echo
-  echo "Example:  $(bold "./bugbay.sh info dvwa")"
+  echo; echo "Example:  $(bold "./bugbay.sh info dvwa")"
 }
 
 ############################################
@@ -288,20 +308,11 @@ project_stop() {
   local fullname="$1" projectname="$2"
   local cid; cid="$(dps -q -f "name=^/${projectname}$")"
   if [ -n "$cid" ]; then
-    echo "Stopping $fullname"; sudo docker stop "$projectname" >/dev/null; removehost "$projectname"
+    echo "Stopping $fullname (local)"; sudo docker stop "$projectname" >/dev/null; removehost "$projectname"
   fi
   local public="${projectname}public"
   cid="$(dps -q -f "name=^/${public}$")"
   [ -n "$cid" ] && { echo "Stopping $fullname (public)"; sudo docker stop "$public" >/dev/null; }
-}
-
-project_rm() {
-  ensure_docker_running
-  local fullname="$1" projectname="$2"
-  project_stop "$fullname" "$projectname"
-  [ -n "$(sudo docker ps -a -q -f "name=^/${projectname}$" 2>/dev/null || true)" ] && sudo docker rm "$projectname" >/dev/null || true
-  [ -n "$(sudo docker ps -a -q -f "name=^/${projectname}public$" 2>/dev/null || true)" ] && sudo docker rm "${projectname}public" >/dev/null || true
-  removehost "$projectname" || true
 }
 
 ############################################
@@ -309,14 +320,13 @@ project_rm() {
 ############################################
 project_status() {
   ensure_docker_running
-  local mode="${1:-running}"  # running | all
+  local mode="${1:-running}"
 
   printf "%-28s  %-7s  %s\n" "$(bold Application)" "$(bold State)" "$(bold Info)"
   printf "%-28s  %-7s  %s\n" "----------------------------" "-------" "-----------------------------"
 
   local total=0 running=0 public=0
 
-  # title|short|url
   while IFS='|' read -r title short url; do
     [ -z "$short" ] && continue
     total=$((total+1))
@@ -366,6 +376,244 @@ TABLE
   echo
   printf "Apps: %s, Local running: %s, Public running: %s\n" "$total" "$running" "$public"
   echo "$(dim "Compose labs: crAPI, Vulhub (use docker compose)")"
+}
+
+############################################
+# Remove (containers/hosts [+ optional images])
+############################################
+remove_container_if_exists() { # name
+  local n="$1"
+  if [ -n "$(sudo docker ps -a -q -f "name=^/${n}$" 2>/dev/null || true)" ]; then
+    echo "Removing container: $n"
+    sudo docker rm -f -v "$n" >/dev/null || true
+  fi
+}
+
+remove_image_if_exists() { # repo (we only remove repo:latest)
+  local repo="$1"
+  local ref="${repo}:latest"
+  local iid
+  iid="$(sudo docker images -q "$ref" 2>/dev/null || true)"
+  if [ -n "$iid" ]; then
+    echo "Removing image: $ref"
+    sudo docker rmi -f "$ref" >/dev/null || true
+  fi
+}
+
+project_rm_one() { # key do_images dry_run
+  ensure_docker_running
+  local key="$1" do_images="$2" dry="$3"
+  local type image
+  type="$(lab_type "$key" || true)"
+  [ -z "$type" ] && { echo "Skipping unknown lab: $key"; return; }
+  if [ "$type" != "single" ]; then
+    echo "Skipping compose lab (use compose directly): $key"
+    return
+  fi
+  image="$(lab_image "$key")"
+  echo "Cleaning lab: $key"
+
+  if [ "$dry" = "1" ]; then
+    echo "  would stop   : $key (local)"
+    echo "  would stop   : ${key}public (public)"
+    echo "  would rm cont: $key"
+    echo "  would rm cont: ${key}public"
+    echo "  would unhost : $key"
+    if [ "$do_images" = "1" ]; then
+      echo "  would rmi    : ${image}:latest"
+    fi
+    return
+  fi
+
+  # stop if running (prints stops)
+  project_stop "$key" "$key" || true
+  # remove local/public containers
+  remove_container_if_exists "$key"
+  remove_container_if_exists "${key}public"
+  # clean hosts
+  removehost "$key" || true
+  # optional images (only repo:latest)
+  if [ "$do_images" = "1" ]; then
+    remove_image_if_exists "$image"
+  fi
+  echo "Done: $key"
+}
+
+rm_dispatch() {
+  ensure_docker_running
+  local target="${1-}"; shift || true
+
+  # flags
+  local DO_IMAGES=0 ASSUME_YES=0 DRY_RUN=0
+  while [ "${1-}" != "" ]; do
+    case "$1" in
+      --images|--purge) DO_IMAGES=1 ;;
+      --yes|-y)         ASSUME_YES=1 ;;
+      --dry-run)        DRY_RUN=1 ;;
+      *) _die "Unknown flag for rm: $1" ;;
+    esac
+    shift || true
+  done
+
+  if [ -z "$target" ]; then _die "rm needs <lab|all> [--images|--purge] [--yes|-y] [--dry-run]"; fi
+
+  if [ "$target" = "all" ]; then
+    if [ "$DRY_RUN" = "0" ] && [ "$ASSUME_YES" = "0" ]; then
+      echo "This will remove all single-container lab containers and hosts${DO_IMAGES:+, and images (:latest)}."
+      printf "Proceed (y/N)? "
+      read -r ans || true
+      if ! printf '%s' "$ans" | grep -iq '^y'; then
+        echo "Aborted."; return
+      fi
+    fi
+    echo "Cleaning all single-container labs${DO_IMAGES:+ (including images)}..."
+    while read -r k; do project_rm_one "$k" "$DO_IMAGES" "$DRY_RUN"; done < <(single_keys)
+    echo "All single-container labs processed."
+    echo "Note: compose labs (crAPI, Vulhub) are not removed by 'rm all'."
+    return
+  fi
+
+  # single lab
+  local type; type="$(lab_type "$target" || true)"
+  [ -z "$type" ] && _die "Unknown lab: $target"
+  if [ "$DRY_RUN" = "0" ] && [ "$ASSUME_YES" = "0" ] && [ "$DO_IMAGES" = "1" ]; then
+    echo "This will remove containers/hosts and the image (:latest) for '$target'."
+    printf "Proceed (y/N)? "
+    read -r ans || true
+    if ! printf '%s' "$ans" | grep -iq '^y'; then
+      echo "Aborted."; return
+    fi
+  fi
+  project_rm_one "$target" "$DO_IMAGES" "$DRY_RUN"
+}
+
+############################################
+# Compose helpers (with fallbacks)
+############################################
+_have_compose() {
+  if have_cmd docker && docker compose version >/dev/null 2>&1; then
+    echo "docker-compose-v2"
+    return 0
+  elif have_cmd docker-compose; then
+    echo "docker-compose-v1"
+    return 0
+  fi
+  return 1
+}
+
+compose_cmd() {
+  if [ "$(_have_compose || true)" = "docker-compose-v1" ]; then
+    echo "docker-compose"
+  else
+    echo "docker compose"
+  fi
+}
+
+compose_start() {
+  ensure_docker_running
+  have_cmd git || _die "git is required to clone compose repos"
+  local name="$1" git_url="$2" compose_dir="$3" hint="$4"
+  _have_compose || _die "docker compose (or docker-compose) is required"
+  local DCMD; DCMD="$(compose_cmd)"
+  echo "Starting $name via $DCMD ..."
+  mkdir -p "$HOME/.bugbay"
+  if [ ! -d "$HOME/.bugbay/$name" ]; then git clone "$git_url" "$HOME/.bugbay/$name"; fi
+  ( cd "$HOME/.bugbay/$name/$compose_dir" && $DCMD pull && $DCMD up -d )
+  echo "$name started. Try: $hint"
+}
+compose_stop() {
+  ensure_docker_running
+  _have_compose || _die "docker compose (or docker-compose) is required"
+  local DCMD; DCMD="$(compose_cmd)"
+  local name="$1" compose_dir="$2"
+  if [ -d "$HOME/.bugbay/$name/$compose_dir" ]; then
+    ( cd "$HOME/.bugbay/$name/$compose_dir" && $DCMD down )
+  else
+    echo "Compose dir for $name not found."
+  fi
+}
+compose_info() { echo "$1 uses multiple compose labs. Browse: $2"; }
+
+############################################
+# Extra ops
+############################################
+pull_image() { ensure_docker_running; echo "Pulling $1 ..."; sudo docker pull "$1" || true; }
+pull_dispatch() {
+  local target="${1-}"; [ -z "$target" ] && _die "pull needs <lab|all>"
+  if [ "$target" = "all" ]; then
+    for img in \
+      raesene/bwapp webgoat/webgoat-7.1 webgoat/webgoat-8.0 webgoat/goatandwolf \
+      vulnerables/web-dvwa citizenstig/nowasp bkimminich/juice-shop \
+      eystsen/vulnerablewordpress opendns/security-ninjas eystsen/altoro \
+      carvesystems/vulnerable-graphql-api owasp/railsgoat appsecco/dvna \
+      vulnerables/web-owasp-nodegoat neuralegion/brokencrystals \
+      sasanlabs/owasp-vulnerableapp dolevf/dvga tuxotron/xvwa tssoffsec/dvws \
+      erev0s/vampi psiinon/bodgeit jeroenwillemsen/wrongsecrets \
+      pierrickv/hackazon
+    do pull_image "$img"; done
+    echo "Note: compose labs (crAPI, Vulhub) not pulled by 'pull all'."
+  else
+    case "$target" in
+      bwapp) pull_image "raesene/bwapp" ;;
+      webgoat7) pull_image "webgoat/webgoat-7.1" ;;
+      webgoat8) pull_image "webgoat/webgoat-8.0" ;;
+      webgoat81) pull_image "webgoat/goatandwolf" ;;
+      dvwa) pull_image "vulnerables/web-dvwa" ;;
+      mutillidae) pull_image "citizenstig/nowasp" ;;
+      juiceshop) pull_image "bkimminich/juice-shop" ;;
+      vulnerablewordpress) pull_image "eystsen/vulnerablewordpress" ;;
+      securityninjas) pull_image "opendns/security-ninjas" ;;
+      altoro) pull_image "eystsen/altoro" ;;
+      graphql) pull_image "carvesystems/vulnerable-graphql-api" ;;
+      railsgoat) pull_image "owasp/railsgoat" ;;
+      dvna) pull_image "appsecco/dvna" ;;
+      nodegoat) pull_image "vulnerables/web-owasp-nodegoat" ;;
+      brokencrystals) pull_image "neuralegion/brokencrystals" ;;
+      vulnerableapp) pull_image "sasanlabs/owasp-vulnerableapp" ;;
+      dvga) pull_image "dolevf/dvga" ;;
+      xvwa) pull_image "tuxotron/xvwa" ;;
+      dvws) pull_image "tssoffsec/dvws" ;;
+      vampi) pull_image "erev0s/vampi" ;;
+      bodgeit) pull_image "psiinon/bodgeit" ;;
+      wrongsecrets) pull_image "jeroenwillemsen/wrongsecrets" ;;
+      hackazon) pull_image "pierrickv/hackazon" ;;
+      crapi|vulhub) echo "Use compose directories to pull these." ;;
+      *) _die "Unknown lab: $target" ;;
+    esac
+  fi
+}
+logs_dispatch() {
+  ensure_docker_running
+  local app="${1-}"; [ -z "$app" ] && _die "logs needs <lab>"
+  local name="$app"
+  if [ -z "$(sudo docker ps -a -q -f "name=^/${name}$" 2>/dev/null || true)" ]; then
+    if [ -n "$(sudo docker ps -a -q -f "name=^/${name}public$" 2>/dev/null || true)" ]; then name="${name}public"; else _die "No container found: $app"; fi
+  fi
+  sudo docker logs -f "$name"
+}
+shell_dispatch() {
+  ensure_docker_running
+  local app="${1-}"; [ -z "$app" ] && _die "shell needs <lab>"
+  local name="$app"
+  if [ -z "$(dps -q -f "name=^/${name}$")" ]; then
+    if [ -n "$(dps -q -f "name=^/${name}public$")" ]; then name="${name}public"; else _die "Container not running: $app"; fi
+  fi
+  if sudo docker exec "$name" bash -lc 'true' 2>/dev/null; then sudo docker exec -it "$name" bash; else sudo docker exec -it "$name" sh; fi
+}
+self_update() {
+  echo "Downloading: $BUGBAY_UPDATE_URL"
+  local tmp; tmp="$(mktemp)"
+  if have_cmd curl && curl -fsSL "$BUGBAY_UPDATE_URL" -o "$tmp"; then
+    :
+  elif have_cmd wget && wget -qO "$tmp" "$BUGBAY_UPDATE_URL"; then
+    :
+  else
+    rm -f "$tmp" || true; _die "Neither curl nor wget available to self-update."
+  fi
+  chmod +x "$tmp"
+  cp "$0" "${0}.bak.$(date +%s)"
+  mv "$tmp" "$0"
+  echo "Updated. Backup saved as ${0}.bak.<timestamp>"
 }
 
 ############################################
@@ -449,33 +697,9 @@ project_stop_dispatch() {
 }
 
 ############################################
-# Compose helpers
-############################################
-compose_start() {
-  ensure_docker_running
-  local name="$1" git_url="$2" compose_dir="$3" hint="$4"
-  echo "Starting $name via docker compose..."
-  mkdir -p "$HOME/.bugbay"
-  if [ ! -d "$HOME/.bugbay/$name" ]; then git clone "$git_url" "$HOME/.bugbay/$name"; fi
-  ( cd "$HOME/.bugbay/$name/$compose_dir" && docker compose pull && docker compose up -d )
-  echo "$name started. Try: $hint"
-}
-compose_stop() {
-  ensure_docker_running
-  local name="$1" compose_dir="$2"
-  if [ -d "$HOME/.bugbay/$name/$compose_dir" ]; then
-    ( cd "$HOME/.bugbay/$name/$compose_dir" && docker compose down )
-  else
-    echo "Compose dir for $name not found."
-  fi
-}
-compose_info() { echo "$1 uses multiple compose labs. Browse: $2"; }
-
-############################################
 # Extra ops
 ############################################
-pull_image() { ensure_docker_running; echo "Pulling $1 ..."; sudo docker pull "$1" || true; }
-pull_dispatch() {
+pull_dispatch() { # unchanged from earlier version
   local target="${1-}"; [ -z "$target" ] && _die "pull needs <lab|all>"
   if [ "$target" = "all" ]; then
     for img in \
@@ -519,45 +743,6 @@ pull_dispatch() {
     esac
   fi
 }
-logs_dispatch() {
-  ensure_docker_running
-  local app="${1-}"; [ -z "$app" ] && _die "logs needs <lab>"
-  local name="$app"
-  if [ -z "$(sudo docker ps -a -q -f "name=^/${name}$" 2>/dev/null || true)" ]; then
-    if [ -n "$(sudo docker ps -a -q -f "name=^/${name}public$" 2>/dev/null || true)" ]; then name="${name}public"; else _die "No container found: $app"; fi
-  fi
-  sudo docker logs -f "$name"
-}
-shell_dispatch() {
-  ensure_docker_running
-  local app="${1-}"; [ -z "$app" ] && _die "shell needs <lab>"
-  local name="$app"
-  if [ -z "$(dps -q -f "name=^/${name}$")" ]; then
-    if [ -n "$(dps -q -f "name=^/${name}public$")" ]; then name="${name}public"; else _die "Container not running: $app"; fi
-  fi
-  if sudo docker exec "$name" bash -lc 'true' 2>/dev/null; then sudo docker exec -it "$name" bash; else sudo docker exec -it "$name" sh; fi
-}
-rm_dispatch() {
-  ensure_docker_running
-  local app="${1-}"; [ -z "$app" ] && _die "rm needs <lab>"
-  case "$app" in
-    crapi|vulhub) echo "Use compose down for $app."; ;;
-    *) project_rm "$app" "$app" ;;
-  esac
-}
-self_update() {
-  echo "Downloading: $BUGBAY_UPDATE_URL"
-  local tmp; tmp="$(mktemp)"
-  if curl -fsSL "$BUGBAY_UPDATE_URL" -o "$tmp"; then
-    chmod +x "$tmp"
-    cp "$0" "${0}.bak.$(date +%s)"
-    mv "$tmp" "$0"
-    echo "Updated. Backup saved as ${0}.bak.<timestamp>"
-  else
-    rm -f "$tmp" || true
-    _die "Download failed."
-  fi
-}
 
 ############################################
 # Main
@@ -572,12 +757,11 @@ case "${1-}" in
   startpublic)    [ -z "${2-}" ] && { echo "usage: $0 startpublic <lab> [ip] [port]"; exit 1; }
                   port="${4-80}"
                   if [ -n "${3-}" ]; then publicip="$3"; else publicip=$(hostname -I | awk '{print $1}'); fi
-                  listen="$publicip:$port"
-                  if ss -lnt4 2>/dev/null | awk '{print $4}' | grep -qx "$listen"; then _die "$publicip already listening on $port"; fi
+                  if is_listening "$publicip" "$port"; then _die "$publicip already listening on $port"; fi
                   project_startpublic_dispatch "$2" "$publicip" "$port"
                   echo "$(c 3 "WARNING") expose only in trusted labs." ;;
   stop)           [ -z "${2-}" ] && { echo "usage: $0 stop <lab>"; exit 1; }; project_stop_dispatch "$2" ;;
-  rm)             rm_dispatch "${2-}" ;;
+  rm)             shift; rm_dispatch "${1-}" ${2:+$2} ${3:+$3} ;;
   logs)           logs_dispatch "${2-}" ;;
   shell)          shell_dispatch "${2-}" ;;
   pull)           pull_dispatch "${2-}" ;;
