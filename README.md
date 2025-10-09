@@ -1,3 +1,5 @@
+<img width="100%" height="191" alt="BugBay Banner" src="https://github.com/user-attachments/assets/8bf3dbfd-7df9-48f5-a216-d3422f046e23" />
+
 # BugBay — Local Pentest Lab Manager (Docker + hosts aliases)
 
 Spin up a local playground of intentionally vulnerable web apps—**fast**, **repeatable**, and **safe** on loopback. BugBay manages Docker containers, friendly hostnames (via `/etc/hosts`), and a small set of Docker Compose labs, so you can focus on practicing and teaching web security—not yak-shaving.
@@ -106,7 +108,7 @@ bugbay.sh {list|status|info|start|startpublic|stop|pull|logs|shell|rm|self-updat
 * `pull <lab|all>` — Pull latest images
 * `logs <lab>` — Tail container logs
 * `shell <lab>` — Open an interactive shell inside the running container
-* `rm <lab>` — Stop & remove containers; clean hosts
+* `rm <lab|all> [--images|--purge] [--include-compose] [--yes|-y] [--dry-run]` — Stop & remove containers; clean hosts
 * `self-update` — Update the script from the repo’s published URL
 
 > **Warning:** `startpublic` is for trusted networks/labs only. Know your environment before exposing intentionally vulnerable apps.
@@ -241,6 +243,8 @@ This project is licensed under the **Apache License 2.0**. See [`LICENSE`](LICEN
 ---
 
 ## Credits
+
+<img width="440" height="170" alt="BugBay Logo Small" src="https://github.com/user-attachments/assets/5d4abe20-7916-4fd8-a275-faa0433bee0a" />
 
 * **Primary author & main contributor:** **[@sakibulalikhan](https://github.com/sakibulalikhan)**
 * Maintained by **HiddenInvestigations.Net**
